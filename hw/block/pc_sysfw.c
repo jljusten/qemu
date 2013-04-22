@@ -237,6 +237,9 @@ void pc_system_firmware_init(MemoryRegion *rom_memory)
             old_pc_system_rom_init(rom_memory);
             return;
         }
+    } else if (kvm_enabled() && !kvm_readonly_mem_enabled()) {
+        fprintf(stderr, "qemu: pflash with kvm requires KVM readonly memory support\n");
+        exit(1);
     }
 
     /* If a pflash drive is not found, then create one using
