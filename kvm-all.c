@@ -205,6 +205,13 @@ static int kvm_set_user_memory_region(KVMState *s, KVMSlot *slot)
     if (s->migration_log) {
         mem.flags |= KVM_MEM_LOG_DIRTY_PAGES;
     }
+    if (mem.flags & KVM_MEM_READONLY && mem.memory_size != 0) {
+        /* Workaround an issue with setting a READONLY slot. Set the
+         * slot size to 0 before setting the slot to the desired value. */
+        mem.memory_size = 0;
+        kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
+        mem.memory_size = slot->memory_size;
+    }
     return kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
 }
 
