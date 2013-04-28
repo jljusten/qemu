@@ -596,6 +596,8 @@ static int pflash_cfi01_init(SysBusDevice *dev)
         }
     }
 
+    memory_region_set_readonly(&pfl->mem, true);
+
     if (pfl->bs) {
         pfl->ro = bdrv_is_read_only(pfl->bs);
     } else {
