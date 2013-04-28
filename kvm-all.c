@@ -201,12 +201,18 @@ static int kvm_set_user_memory_region(KVMState *s, KVMSlot *slot)
 
     mem.slot = slot->slot;
     mem.guest_phys_addr = slot->start_addr;
-    mem.memory_size = slot->memory_size;
     mem.userspace_addr = (unsigned long)slot->ram;
     mem.flags = slot->flags;
     if (s->migration_log) {
         mem.flags |= KVM_MEM_LOG_DIRTY_PAGES;
     }
+    if (mem.flags & KVM_MEM_READONLY && mem.memory_size != 0) {
+        /* Set the slot size to 0 before setting the slot to the desired
+         * value. This is needed based on KVM commit 75d61fbc. */
+        mem.memory_size = 0;
+        kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
+    }
+    mem.memory_size = slot->memory_size;
     return kvm_vm_ioctl(s, KVM_SET_USER_MEMORY_REGION, &mem);
 }
 
@@ -268,9 +274,14 @@ err:
  * dirty pages logging control
  */
 
-static int kvm_mem_flags(KVMState *s, bool log_dirty)
+static int kvm_mem_flags(KVMState *s, bool log_dirty, bool readonly)
 {
-    return log_dirty ? KVM_MEM_LOG_DIRTY_PAGES : 0;
+    int flags = 0;
+    flags = log_dirty ? KVM_MEM_LOG_DIRTY_PAGES : 0;
+    if (readonly && kvm_readonly_mem_allowed) {
+        flags |= KVM_MEM_READONLY;
+    }
+    return flags;
 }
 
 static int kvm_slot_dirty_pages_log_change(KVMSlot *mem, bool log_dirty)
@@ -281,7 +292,7 @@ static int kvm_slot_dirty_pages_log_change(KVMSlot *mem, bool log_dirty)
 
     old_flags = mem->flags;
 
-    flags = (mem->flags & ~mask) | kvm_mem_flags(s, log_dirty);
+    flags = (mem->flags & ~mask) | kvm_mem_flags(s, log_dirty, false);
     mem->flags = flags;
 
     /* If nothing changed effectively, no need to issue ioctl */
@@ -638,7 +649,14 @@ static void kvm_set_phys_mem(MemoryRegionSection *section, bool add)
     }
 
     if (!memory_region_is_ram(mr)) {
-        return;
+        if (!mr->readonly || !kvm_readonly_mem_allowed) {
+            return;
+        } else if (!mr->readable && add) {
+            /* If the memory range is not readable, then we actually want
+             * to remove the kvm memory slot so all accesses will trap. */
+            assert(mr->readonly && kvm_readonly_mem_allowed);
+            add = false;
+        }
     }
 
     ram = memory_region_get_ram_ptr(mr) + section->offset_within_region + delta;
@@ -687,7 +705,7 @@ static void kvm_set_phys_mem(MemoryRegionSection *section, bool add)
             mem->memory_size = old.memory_size;
             mem->start_addr = old.start_addr;
             mem->ram = old.ram;
-            mem->flags = kvm_mem_flags(s, log_dirty);
+            mem->flags = kvm_mem_flags(s, log_dirty, mr->readonly);
 
             err = kvm_set_user_memory_region(s, mem);
             if (err) {
@@ -708,7 +726,7 @@ static void kvm_set_phys_mem(MemoryRegionSection *section, bool add)
             mem->memory_size = start_addr - old.start_addr;
             mem->start_addr = old.start_addr;
             mem->ram = old.ram;
-            mem->flags =  kvm_mem_flags(s, log_dirty);
+            mem->flags =  kvm_mem_flags(s, log_dirty, mr->readonly);
 
             err = kvm_set_user_memory_region(s, mem);
             if (err) {
@@ -732,7 +750,7 @@ static void kvm_set_phys_mem(MemoryRegionSection *section, bool add)
             size_delta = mem->start_addr - old.start_addr;
             mem->memory_size = old.memory_size - size_delta;
             mem->ram = old.ram + size_delta;
-            mem->flags = kvm_mem_flags(s, log_dirty);
+            mem->flags = kvm_mem_flags(s, log_dirty, mr->readonly);
 
             err = kvm_set_user_memory_region(s, mem);
             if (err) {
@@ -754,7 +772,7 @@ static void kvm_set_phys_mem(MemoryRegionSection *section, bool add)
     mem->memory_size = size;
     mem->start_addr = start_addr;
     mem->ram = ram;
-    mem->flags = kvm_mem_flags(s, log_dirty);
+    mem->flags = kvm_mem_flags(s, log_dirty, mr->readonly);
 
     err = kvm_set_user_memory_region(s, mem);
     if (err) {
