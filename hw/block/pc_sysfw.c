@@ -273,7 +273,7 @@ void pc_system_firmware_init(MemoryRegion *rom_memory)
 
 static Property pcsysfw_properties[] = {
     DEFINE_PROP_UINT8("isapc_ram_fw", PcSysFwDevice, isapc_ram_fw, 0),
-    DEFINE_PROP_UINT8("rom_only", PcSysFwDevice, rom_only, 1),
+    DEFINE_PROP_UINT8("rom_only", PcSysFwDevice, rom_only, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
